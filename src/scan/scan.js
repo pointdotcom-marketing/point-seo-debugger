@@ -460,7 +460,7 @@ function exportCsv() {
   } catch {
     /* keep default */
   }
-  a.download = `seo-lens-scan-${host}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `point-seo-debugger-scan-${host}-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
