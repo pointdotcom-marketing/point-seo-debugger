@@ -10,6 +10,7 @@ A Chrome extension for checking a page's SEO setup while you edit it. Click the 
 | **Images** | Every image, with filters for missing alt, empty alt, filename-as-alt, and missing width/height. Click an image to find it on the page. Export as CSV. |
 | **Links** | Total, unique, internal, external, and nofollow counts. Flags empty anchor text, links to staging hosts (`*.webflow.io`, `*.vercel.app`, `localhost`…), and `http://` links. **Check link status** fetches each link and reports 404s and redirects. Export as CSV. |
 | **Social** | Facebook/LinkedIn and X card previews, og:image size check, and every `og:` and `twitter:` tag |
+| **AI** | Which AI crawlers may use the page, grouped by operator (OpenAI, Anthropic, Google, Perplexity, Apple, Meta, Amazon, Microsoft, Mistral and others) and split into **training**, **AI search**, and **user-triggered fetches**. Shows the robots.txt rule that decides each one, and flags user-triggered agents that may ignore robots.txt. Also reads Cloudflare `Content-Signal` and IETF `Content-Usage` preferences, the robots meta directives that affect AI Overviews and Copilot (`nosnippet`, `max-snippet`, `noarchive`, `nocache`), and `llms.txt`. **Test with bot user agents** re-fetches the page as each bot to catch CDN or firewall blocks that robots.txt doesn't show. A generator writes robots.txt rules for common policies. |
 | **Tools** | One-click links to the Rich Results Test, PageSpeed Insights, Schema.org Validator, W3C validators, Facebook and LinkedIn debuggers, robots.txt, sitemaps, and Wayback Machine |
 
 The toolbar badge shows the error count for the current tab (red), or the warning count (amber), or ✓ when clean. Hover the icon for a summary.
@@ -80,6 +81,10 @@ src/
 scripts/                 vocab, icon, and zip builders
 tests/                   unit tests, e2e test, fixtures
 ```
+
+### Keeping the AI crawler list current
+
+The bot list in `src/lib/ai-crawlers.js` was checked against each operator's docs on **2026-10-19**. Operators add and rename bots often. <https://github.com/ai-robots-txt/ai.robots.txt> is a good place to spot new ones, but confirm each against the operator's own docs before adding it.
 
 ### Keeping rules current
 

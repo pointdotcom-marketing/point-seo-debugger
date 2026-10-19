@@ -3,6 +3,9 @@ import { analyzeSeo } from '../lib/seo.js';
 import { parseRobots, robotsAllows } from '../lib/robots.js';
 import { esc, csv, copyText, empty } from './ui.js';
 import { renderSchema } from './views-schema.js';
+import { analyzeAiAccess, robotsSnippet } from '../lib/ai-crawlers.js';
+import { loadAiFiles, probeBots } from './ai.js';
+import { renderAi } from './views-ai.js';
 import { renderOverview, renderHeadings, renderImages, renderLinks, renderSocial, renderTools, filteredImages, filteredLinks } from './views-seo.js';
 
 const $ = (id) => document.getElementById(id);
@@ -14,6 +17,7 @@ const TABS = [
   ['images', 'Images'],
   ['links', 'Links'],
   ['social', 'Social'],
+  ['ai', 'AI'],
   ['tools', 'Tools'],
 ];
 
@@ -37,6 +41,12 @@ const state = {
   linkStatus: new Map(),
   linkCheckRunning: false,
   linkCheckTotal: 0,
+  ai: null,
+  aiFiles: null,
+  aiFilesFor: null,
+  aiProbes: null,
+  aiProbeRunning: false,
+  aiPolicy: 'block-training',
 };
 
 // ---------------------------------------------------------------------------
@@ -96,17 +106,22 @@ function resetPerPage() {
   state.linkStatus = new Map();
   state.linkCheckRunning = false;
   state.ogImage = null;
+  state.aiProbes = null;
 }
 
 function show(page, { force = false } = {}) {
   const urlChanged = state.page?.url !== page.url;
   state.page = page;
   state.schema = analyzePage(page);
-  if (urlChanged) state.linkStatus = new Map();
+  if (urlChanged) {
+    state.linkStatus = new Map();
+    state.aiProbes = null;
+  }
   analyze();
   render();
   loadNetworkInfo(force);
   loadOgImage();
+  loadAi(force);
 }
 
 function analyze() {
@@ -117,6 +132,58 @@ function analyze() {
     http: sameHttp ? state.http : null,
     robotsTxt: robotsResult,
   });
+  analyzeAi();
+}
+
+function analyzeAi() {
+  const origin = new URL(state.page.url).origin;
+  if (state.robotsPending || state.robotsFor !== origin) {
+    state.ai = null;
+    return;
+  }
+  const metas = state.page.seo?.metas || [];
+  const directives = metas
+    .filter((m) => ['robots', 'googlebot', 'bingbot'].includes(String(m.name).toLowerCase()))
+    .flatMap((m) => String(m.content).split(','))
+    .concat(state.httpFor === state.page.url && state.http?.xRobotsTag ? state.http.xRobotsTag.replace(/^[a-z-]+:\s*(?=[a-z])/i, '').split(',') : [])
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+  const files = state.aiFilesFor === state.page.url ? state.aiFiles : null;
+  state.ai = analyzeAiAccess({
+    url: state.page.url,
+    robots: state.robots,
+    robotsDirectives: directives,
+    contentUsageHeader: files?.contentUsage ?? null,
+    llms: files?.llms ?? null,
+    dataNosnippet: state.page.seo?.dataNosnippet ?? 0,
+  });
+}
+
+async function loadAi(force) {
+  if (!/^https?:/.test(state.page.url)) return;
+  const url = state.page.url;
+  if (!force && state.aiFilesFor === url) return;
+  const files = await loadAiFiles(url);
+  if (state.page?.url !== url) return;
+  state.aiFiles = files;
+  state.aiFilesFor = url;
+  analyzeAi();
+  if (state.tab === 'ai') render();
+}
+
+async function runAiProbe() {
+  const url = state.page.url;
+  state.aiProbes = new Map();
+  state.aiProbeRunning = true;
+  render();
+  let timer = null;
+  await probeBots(url, (token, result) => {
+    if (state.page?.url !== url) return;
+    state.aiProbes.set(token, result);
+    if (!timer) timer = setTimeout(() => ((timer = null), state.tab === 'ai' && render()), 200);
+  });
+  state.aiProbeRunning = false;
+  render();
 }
 
 function showUnavailable(tab, message) {
@@ -169,7 +236,7 @@ async function loadNetworkInfo(force) {
         try {
           const res = await fetchWithTimeout(`${origin}/robots.txt`, { credentials: 'include' });
           const type = res.headers.get('content-type') || '';
-          if (!res.ok) state.robots = { error: `No robots.txt (HTTP ${res.status})` };
+          if (!res.ok) state.robots = { error: `No robots.txt (HTTP ${res.status})`, status: res.status };
           else if (/html/i.test(type)) state.robots = { error: 'robots.txt returned an HTML page' };
           else {
             const text = await res.text();
@@ -285,6 +352,7 @@ function render() {
     images: pick(areaErrors('images'), seo.images.missingAlt),
     links: pick(areaErrors('links'), areaWarnings('links')),
     social: pick(areaErrors('social'), areaWarnings('social')),
+    ai: state.ai ? pick(state.ai.checks.filter((c) => c.severity === 'error').length, state.ai.checks.filter((c) => c.severity === 'warning').length) : null,
   };
   $('tabs').hidden = false;
   $('tabs').innerHTML = TABS.map(([id, label]) => {
@@ -303,6 +371,7 @@ function render() {
     images: renderImages,
     links: renderLinks,
     social: renderSocial,
+    ai: renderAi,
     tools: renderTools,
   }[state.tab](state);
   document.scrollingElement.scrollTop = sameTab ? scroll : 0;
@@ -357,6 +426,11 @@ $('content').addEventListener('click', (e) => {
     return render();
   }
   if ((el = t('[data-check-links]'))) return checkLinks();
+  if ((el = t('[data-ai-probe]'))) return runAiProbe();
+  if ((el = t('[data-ai-policy]'))) {
+    state.aiPolicy = el.dataset.aiPolicy;
+    return render();
+  }
   if ((el = t('[data-hl]'))) {
     chrome.tabs.sendMessage(state.tabId, { type: 'seo-lens:highlight', kind: el.dataset.hl, index: +el.dataset.index }).catch(() => {});
     return;
@@ -372,6 +446,7 @@ $('content').addEventListener('click', (e) => {
   }
   if ((el = t('[data-copy]'))) {
     const kind = el.dataset.copy;
+    if (kind === 'ai-robots') return copyText(robotsSnippet(state.aiPolicy), el);
     if (kind === 'headings') {
       return copyText(state.seo.headings.items.map((h) => `${'  '.repeat(h.level - 1)}H${h.level}: ${h.text}`).join('\n'), el);
     }

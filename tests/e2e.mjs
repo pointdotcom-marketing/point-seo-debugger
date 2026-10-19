@@ -14,6 +14,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const fixtures = join(root, 'tests/fixtures');
 const shots = process.env.SCREENSHOT_DIR;
 const HOSTNAME = 'www.example-home.com';
+// A second site with AI-crawler rules, so its robots.txt doesn't change the main fixtures.
+const AI_HOSTNAME = 'ai.example-home.com';
 
 // --- Fixture server --------------------------------------------------------
 const server = createServer(async (req, res) => {
@@ -23,6 +25,12 @@ const server = createServer(async (req, res) => {
     res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', ...headers });
     res.end(req.method === 'HEAD' ? undefined : body);
   };
+  if (host.startsWith(AI_HOSTNAME)) {
+    if (path === '/robots.txt') return send(200, 'User-agent: GPTBot\nUser-agent: ClaudeBot\nDisallow: /\n\nUser-agent: anthropic-ai\nDisallow: /\n\nUser-agent: *\nContent-Signal: search=yes, ai-train=no\nAllow: /\n', { 'content-type': 'text/plain' });
+    if (path === '/llms.txt') return send(200, '# Example Home\n> Home equity guides.\n\n## Guides\n- [HEI guide](/clean.html)\n', { 'content-type': 'text/plain' });
+    // Simulates a firewall rule that blocks one AI crawler by User-Agent.
+    if (/Bytespider/.test(req.headers['user-agent'] || '')) return send(403, 'Forbidden');
+  }
   if (path === '/robots.txt') return send(200, `User-agent: *\nDisallow: /blocked/\n\nSitemap: http://${host}/sitemap.xml\n`, { 'content-type': 'text/plain' });
   if (path === '/assets/icon.png') return send(200, await readFile(join(root, 'src/icons/icon-128.png')), { 'content-type': 'image/png' });
   const file = { '/kitchen-sink.html': 'kitchen-sink.html', '/clean.html': 'clean.html', '/noindex.html': 'noindex.html', '/blocked/page.html': 'clean.html', '/': 'clean.html', '/guides/': 'clean.html' }[path];
@@ -44,7 +52,7 @@ const context = await chromium.launchPersistentContext(userDataDir, {
     `--disable-extensions-except=${root}`,
     `--load-extension=${root}`,
     // Resolve the fixture host locally and keep every other host offline so runs are deterministic.
-    `--host-resolver-rules=MAP ${HOSTNAME} 127.0.0.1, MAP * ~NOTFOUND`,
+    `--host-resolver-rules=MAP ${HOSTNAME} 127.0.0.1, MAP ${AI_HOSTNAME} 127.0.0.1, MAP * ~NOTFOUND`,
   ],
 });
 
@@ -217,6 +225,34 @@ try {
     assert.equal(r.seo.summary.indexable, false);
     assert.match(text(r), /robots\.txt blocks Googlebot.*Disallow: \/blocked\//);
   });
+
+  // ---- AI crawler access ---------------------------------------------------
+  const aiPage = await openPanel(`http://${AI_HOSTNAME}:${port}/clean.html`);
+  await aiPage.panel.waitForFunction(() => globalThis.__seoLensState.ai?.llms);
+  const ai = await aiPage.panel.evaluate(() => {
+    const a = globalThis.__seoLensState.ai;
+    return { bots: Object.fromEntries(a.bots.map((b) => [b.token, b.allowed])), signals: a.contentSignals, llms: a.llms, checks: a.checks.map((c) => c.message) };
+  });
+  await check('AI tab: robots.txt verdicts, Content-Signal, llms.txt, legacy token', () => {
+    assert.equal(ai.bots.GPTBot, false);
+    assert.equal(ai.bots.ClaudeBot, false);
+    assert.equal(ai.bots['OAI-SearchBot'], true);
+    assert.equal(ai.bots.PerplexityBot, true);
+    assert.deepEqual(ai.signals[0].prefs, { search: 'yes', 'ai-train': 'no' });
+    assert.equal(ai.llms.title, 'Example Home');
+    assert.ok(ai.checks.some((m) => /"anthropic-ai"/.test(m)));
+  });
+  await check('AI tab: bot user-agent probe catches a firewall block', async () => {
+    await aiPage.panel.click('button[data-tab="ai"]');
+    await aiPage.panel.click('[data-ai-probe]');
+    await aiPage.panel.waitForFunction(() => !globalThis.__seoLensState.aiProbeRunning && globalThis.__seoLensState.aiProbes?.size > 5, null, { timeout: 30000 });
+    const probes = await aiPage.panel.evaluate(() => Object.fromEntries(globalThis.__seoLensState.aiProbes));
+    assert.equal(probes.browser.outcome, 'served');
+    assert.equal(probes.Bytespider.outcome, 'blocked', JSON.stringify(probes.Bytespider));
+    assert.equal(probes.GPTBot.outcome, 'served');
+    assert.match(await aiPage.panel.textContent('#content'), /1 bot user agent was blocked or challenged/);
+  });
+  if (shots) await aiPage.panel.screenshot({ path: join(shots, 'ai-tab.png'), fullPage: true });
 
   // ---- Non-web page -------------------------------------------------------
   await check('panel explains it can\'t run on chrome:// pages', async () => {

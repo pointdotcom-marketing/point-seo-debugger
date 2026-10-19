@@ -129,6 +129,7 @@
         images: collectImages(),
         anchors: collectLinks(),
         wordCount: wordCount(),
+        dataNosnippet: document.querySelectorAll('[data-nosnippet]').length,
       },
     };
   }

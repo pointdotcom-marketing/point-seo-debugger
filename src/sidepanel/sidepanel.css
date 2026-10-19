@@ -356,3 +356,19 @@ a { color: var(--accent); text-decoration: none; }
 .tabs.fade-left { mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
 .tabs.fade-left.fade-right { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 .share-img.none, .x-img.none { font-size: 12px; }
+
+/* ---- AI tab ---- */
+.stat-grid.three { grid-template-columns: repeat(3, 1fr); }
+.stat-box.ai-ok .stat-n { color: var(--ok); }
+.stat-box.ai-warn .stat-n { color: var(--warn); }
+.stat-box.ai-bad .stat-n { color: var(--error); }
+.card-note.rounded { border-radius: 8px; margin-bottom: 10px; }
+.card-sub.wrap { white-space: normal; }
+.bot-row { padding: 6px 10px; }
+.bot-main { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bot-main .grow { flex: 1; }
+.bot-token { font-weight: 600; }
+.bot-sub { font-size: 11px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.tag.purpose-training { background: color-mix(in srgb, var(--code-lit) 16%, var(--bg)); color: var(--code-lit); }
+.tag.purpose-search { background: color-mix(in srgb, var(--accent) 16%, var(--bg)); color: var(--accent); }
+.tag.purpose-user { background: var(--info-bg); color: var(--info); }
