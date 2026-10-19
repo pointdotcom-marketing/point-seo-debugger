@@ -27,7 +27,7 @@ The toolbar badge shows the error count for the current tab (red), or the warnin
 
 The last 5 snapshots per URL are kept (pick an older one from the dropdown). Snapshots live in `chrome.storage.local`, capped at about 4 MB in total; the oldest are dropped first. They skip the HTTP status, `X-Robots-Tag`, and robots.txt checks, so they compare only what's on the page.
 
-**Compare with another URL.** Under **Compare with another URL**, enter any URL and click **Compare**. SEO Lens loads it in a background tab, collects it the same way, closes the tab, and shows the same diff. The URL is filled in for you when:
+**Compare with another URL.** Under **Compare with another URL**, enter any URL and click **Compare**. Point SEO Debugger loads it in a background tab, collects it the same way, closes the tab, and shows the same diff. The URL is filled in for you when:
 
 - the page is on `*.webflow.io` and its canonical (or `og:url`) points at another host, or
 - you've saved a staging ↔ live host pair (**Edit staging ↔ live hosts**, or the **Remember … as staging ↔ live** link after a compare). Pairs work in both directions.
