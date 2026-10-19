@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sitemap scan · SEO Lens</title>
+  <link rel="icon" href="../icons/icon-32.png">
+  <link rel="stylesheet" href="../sidepanel/sidepanel.css">
+  <link rel="stylesheet" href="scan.css">
+</head>
+<body>
+  <header class="top">
+    <img src="../icons/icon-32.png" width="20" height="20" alt="">
+    <div class="page">
+      <div class="page-title">Sitemap scan</div>
+      <div class="page-url" id="site">Check every page in a sitemap with SEO Lens</div>
+    </div>
+  </header>
+
+  <main class="scan">
+    <form id="setup" class="card setup" autocomplete="off">
+      <label class="field wide">
+        <span>Sitemap URL(s)</span>
+        <input id="sitemap" type="text" placeholder="https://www.example.com/sitemap.xml" spellcheck="false" required>
+      </label>
+      <label class="field wide">
+        <span>Only URLs matching <em class="muted">(optional)</em></span>
+        <input id="filter" type="text" placeholder="/blog/   or   /blog/* !*/tag/*" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>Max pages</span>
+        <input id="max" type="number" min="1" max="1000" value="100">
+      </label>
+      <label class="field">
+        <span>Tabs at once</span>
+        <input id="concurrency" type="number" min="1" max="8" value="3">
+      </label>
+      <label class="field">
+        <span>Wait after load (ms)</span>
+        <input id="settle" type="number" min="0" max="10000" step="100" value="1000">
+      </label>
+      <div class="actions">
+        <button type="submit" class="btn primary" id="start">Start scan</button>
+        <button type="button" class="btn" id="pause" hidden>Pause</button>
+        <button type="button" class="btn" id="stop" hidden>Stop</button>
+      </div>
+      <p class="hint full">Each URL opens in a background tab so JavaScript-rendered content is checked the same way the side panel sees it. Tabs use your browser session, so password-protected staging sites you're signed in to work. Several sitemaps can be separated with spaces; sitemap indexes and .xml.gz files are followed.</p>
+    </form>
+
+    <section id="progress" hidden></section>
+    <section id="findings" hidden></section>
+
+    <section id="results" hidden>
+      <div class="results-head">
+        <div class="section-label">Pages</div>
+        <input id="search" type="search" placeholder="Search URL or title" spellcheck="false">
+        <button type="button" class="btn" id="export" title="Download the rows shown as CSV">Export CSV</button>
+      </div>
+      <div id="row-filters"></div>
+      <div class="table-wrap"><table id="table"></table></div>
+    </section>
+  </main>
+
+  <script type="module" src="scan.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>http://HOST/</loc></url>
+  <url><loc>http://HOST/guides/</loc></url>
+  <url><loc>http://HOST/clean.html</loc><lastmod>2026-03-01</lastmod></url>
+  <url><loc>http://HOST/noindex.html</loc></url>
+  <url><loc>http://HOST/kitchen-sink.html</loc></url>
+</urlset>

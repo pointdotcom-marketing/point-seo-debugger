@@ -357,8 +357,11 @@ export function renderTools(state) {
     : robots?.text != null
       ? `robots.txt found (${plural(robots.groups, 'group')}, ${plural(robots.sitemaps.length, 'sitemap')}). Googlebot ${state.seo.summary.robotsTxt?.allowed === false ? `<strong class="bad-text">blocked</strong> by ${mono(state.seo.summary.robotsTxt.rule)}` : 'allowed'} for this URL.`
       : muted(robots?.error || 'No robots.txt found.');
+  const scanQuery = new URLSearchParams([['site', u.origin], ...(robots?.sitemaps || []).map((s) => ['sitemap', s])]);
+  const scanCard = `<div class="card tools"><a class="tool" data-scan-sitemap href="../scan/scan.html?${esc(scanQuery)}" target="_blank" rel="noopener">Scan sitemap: check every page on this site<span>→</span></a></div>`;
   const isLocal = /^(localhost|127\.|10\.|192\.168\.|\[::1\])|\.(local|test|localhost)$/.test(u.hostname);
   return `${isLocal ? '<p class="hint">This is a local/private host that online tools can\'t reach. For structured data, copy the JSON-LD from Schema → Source and paste it into the Rich Results Test\'s Code tab.</p>' : ''}
     <div class="card"><div class="card-head"><div class="grow">${robotsInfo}</div></div></div>
+    ${scanCard}
     ${groups.map(([name, items]) => `<div class="section-label">${esc(name)}</div><div class="card tools">${items.map(([label, href]) => `<a class="tool" href="${esc(href)}" target="_blank" rel="noopener">${esc(label)}<span>↗</span></a>`).join('')}</div>`).join('')}`;
 }
