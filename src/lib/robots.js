@@ -7,6 +7,8 @@
 export function parseRobots(txt) {
   const groups = [];
   const sitemaps = [];
+  // Non-standard lines (Content-Signal, Content-Usage, Crawl-delay…) with the group they appear in.
+  const directives = [];
   let current = null;
   let lastWasAgent = false;
   for (const rawLine of String(txt).split(/\r?\n/)) {
@@ -27,8 +29,9 @@ export function parseRobots(txt) {
     lastWasAgent = false;
     if (key === 'sitemap') sitemaps.push(value);
     else if ((key === 'allow' || key === 'disallow') && current) current.rules.push({ allow: key === 'allow', path: value });
+    else directives.push({ key, value, agents: current ? [...current.agents] : [] });
   }
-  return { groups, sitemaps };
+  return { groups, sitemaps, directives };
 }
 
 function ruleMatches(pattern, path) {
