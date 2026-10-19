@@ -1,6 +1,7 @@
 import { analyzePage } from '../lib/validator.js';
 import { analyzeSeo } from '../lib/seo.js';
 import { parseRobots, robotsAllows } from '../lib/robots.js';
+import { extractRawHtml, compareRawRendered } from '../lib/raw-html.js';
 import { esc, csv, copyText, empty } from './ui.js';
 import { renderSchema } from './views-schema.js';
 import { renderOverview, renderHeadings, renderImages, renderLinks, renderSocial, renderTools, filteredImages, filteredLinks } from './views-seo.js';
@@ -30,6 +31,8 @@ const state = {
   http: null,
   httpFor: null,
   httpPending: false,
+  rawHtml: null,
+  rendering: null,
   robots: null,
   robotsFor: null,
   robotsPending: false,
@@ -117,6 +120,14 @@ function analyze() {
     http: sameHttp ? state.http : null,
     robotsTxt: robotsResult,
   });
+  // Server HTML vs rendered DOM: provenance per item, plus checks for things only JavaScript adds.
+  state.rendering = sameHttp && state.rawHtml ? compareRawRendered(state.rawHtml, { ...state.page.seo, blocks: state.page.blocks }) : null;
+  if (state.rendering) {
+    const seo = state.seo;
+    seo.checks.push(...state.rendering.checks);
+    if (state.rendering.noindex.raw) seo.summary.indexable = false;
+    for (const [k, sev] of [['errors', 'error'], ['warnings', 'warning'], ['infos', 'info']]) seo.counts[k] = seo.checks.filter((c) => c.severity === sev).length;
+  }
 }
 
 function showUnavailable(tab, message) {
@@ -152,10 +163,16 @@ async function loadNetworkInfo(force) {
       (async () => {
         try {
           const res = await fetchWithTimeout(url, { credentials: 'include' });
-          res.body?.cancel().catch(() => {});
           state.http = { status: res.status, redirected: res.redirected, finalUrl: res.url, xRobotsTag: res.headers.get('x-robots-tag') };
+          // The response body is the server HTML, before any JavaScript ran.
+          state.rawHtml = null;
+          if (res.ok && /html/i.test(res.headers.get('content-type') || '')) {
+            const html = await res.text().catch(() => null);
+            if (html != null) state.rawHtml = extractRawHtml(new DOMParser().parseFromString(html, 'text/html'), res.url || url);
+          } else res.body?.cancel().catch(() => {});
         } catch (e) {
           state.http = { error: e.name === 'AbortError' ? 'timed out' : 'request failed' };
+          state.rawHtml = null;
         }
         state.httpFor = url;
         state.httpPending = false;

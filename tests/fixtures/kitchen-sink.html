@@ -92,12 +92,16 @@
     </div>
   </div>
   <script>
-    // Simulates a tag manager injecting JSON-LD after load.
+    // Simulates a tag manager injecting JSON-LD and an Open Graph tag after load.
     setTimeout(() => {
       const s = document.createElement('script');
       s.type = 'application/ld+json';
       s.textContent = JSON.stringify({ '@context': 'https://schema.org', '@type': 'VideoObject', name: 'Intro', thumbnailUrl: 'https://example.com/t.jpg', uploadDate: '2026-01-05' });
       document.head.appendChild(s);
+      const og = document.createElement('meta');
+      og.setAttribute('property', 'og:url');
+      og.content = location.href;
+      document.head.appendChild(og);
     }, 1500);
   </script>
 </body>

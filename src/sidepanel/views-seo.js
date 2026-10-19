@@ -1,5 +1,5 @@
 // Overview, Headings, Images, Links, Social and Tools tabs.
-import { esc, plural, issueList, bySeverity, chips, meter, sev, hostOf, empty } from './ui.js';
+import { esc, plural, issueList, bySeverity, chips, meter, sev, hostOf, empty, provTag } from './ui.js';
 import { TITLE_MAX_PX, DESCRIPTION_MAX_PX } from '../lib/seo.js';
 
 const MAX_ROWS = 500;
@@ -37,6 +37,8 @@ export function renderOverview(state) {
   const { seo, schema } = state;
   const s = seo.summary;
   const c = seo.checks;
+  const rd = state.rendering;
+  const prov = (key) => provTag(rd?.byKey[key]);
 
   const blockers = c.filter((x) => ['robots', 'http'].includes(x.area) && x.severity === 'error');
   const canonicalElsewhere = c.some((x) => x.area === 'canonical' && /different URL/.test(x.message));
@@ -47,13 +49,15 @@ export function renderOverview(state) {
       : `<div class="banner ok">${sev('ok')}<div><strong>Indexable</strong></div></div>`;
 
   const titleVal = s.title
-    ? `<div>${esc(s.title)}</div><div class="kv-meta">${s.titleLength} chars${s.titlePx != null ? ` · ${s.titlePx}px` : ''}</div>${meter(s.titlePx, TITLE_MAX_PX)}`
-    : muted('Missing');
+    ? `<div>${esc(s.title)}</div><div class="kv-meta">${s.titleLength} chars${s.titlePx != null ? ` · ${s.titlePx}px` : ''}${prov('title')}</div>${meter(s.titlePx, TITLE_MAX_PX)}`
+    : muted('Missing') + prov('title');
   const descVal = s.description
-    ? `<div>${esc(s.description)}</div><div class="kv-meta">${s.descriptionLength} chars${s.descriptionPx != null ? ` · ${s.descriptionPx}px` : ''}</div>${meter(s.descriptionPx, DESCRIPTION_MAX_PX)}`
-    : muted('Missing');
-  const canonicalVal = s.canonical ? `${link(s.canonical)}${canonicalElsewhere ? '' : ' <span class="tag ok">self</span>'}` : muted('None');
-  const robotsVal = s.robots.length ? mono(s.robots.join(', ')) : muted('index, follow (default)');
+    ? `<div>${esc(s.description)}</div><div class="kv-meta">${s.descriptionLength} chars${s.descriptionPx != null ? ` · ${s.descriptionPx}px` : ''}${prov('description')}</div>${meter(s.descriptionPx, DESCRIPTION_MAX_PX)}`
+    : muted('Missing') + prov('description');
+  const canonicalVal = (s.canonical ? `${link(s.canonical)}${canonicalElsewhere ? '' : ' <span class="tag ok">self</span>'}` : muted('None')) + prov('canonical');
+  // googlebot overrides robots for Google, so show whichever one JavaScript touched.
+  const robotsItem = [rd?.byKey.googlebot, rd?.byKey.robots].find((i) => i && i.status !== 'html') || rd?.byKey.robots || rd?.byKey.googlebot;
+  const robotsVal = (s.robots.length ? mono(s.robots.join(', ')) : muted('index, follow (default)')) + provTag(robotsItem);
   const http = s.http;
   const httpVal = state.httpPending ? muted('checking…') : http?.status ? `${mono(String(http.status))}${http.redirected ? ` → ${link(http.finalUrl)}` : ''}` : muted(http?.error || 'unavailable');
   const xrt = http?.xRobotsTag ? mono(http.xRobotsTag) : muted('none');
@@ -64,7 +68,19 @@ export function renderOverview(state) {
   const ls = seo.links.stats;
   const linksVal = `${ls.total} · ${ls.internal} internal · ${ls.external} external${ls.nofollow ? ` · ${ls.nofollow} nofollow` : ''}`;
   const sources = [plural(schema.counts.blocks, 'block'), schema.counts.microdata && `${schema.counts.microdata} Microdata`, schema.counts.rdfa && `${schema.counts.rdfa} RDFa`].filter(Boolean).join(' · ');
-  const schemaVal = `${sources} · ${schema.features.length} rich result${schema.features.length === 1 ? '' : 's'}${schema.counts.errors ? ` · <span class="bad-text">${plural(schema.counts.errors, 'error')}</span>` : ''}`;
+  const jsBlocks = rd ? rd.blocks.filter((b) => b.status === 'added').length : 0;
+  const schemaVal = `${sources} · ${schema.features.length} rich result${schema.features.length === 1 ? '' : 's'}${schema.counts.errors ? ` · <span class="bad-text">${plural(schema.counts.errors, 'error')}</span>` : ''}${jsBlocks ? `<span class="prov added">${jsBlocks} added by JavaScript</span>` : ''}`;
+  const hlItems = rd ? rd.items.filter((i) => i.area === 'hreflang') : [];
+  const hlProv = provTag(hlItems.find((i) => i.status !== 'html') || hlItems[0]);
+  const jsChanged = rd ? rd.items.filter((i) => i.status !== 'html').length + rd.blocks.filter((b) => b.status !== 'html').length + rd.removedBlocks.length : 0;
+  const serverVal = state.httpPending
+    ? muted('checking…')
+    : rd
+      ? jsChanged
+        ? `<span class="warn-text">${plural(jsChanged, 'item')} added, changed or removed by JavaScript</span>`
+        : 'Matches the rendered page'
+      : muted(/^https?:/.test(state.page.url) ? 'unavailable' : 'not checked for local files');
+  const serverAreas = rd ? [...new Set(rd.checks.map((x) => x.area))] : [];
 
   const rows = [
     row('Title', titleVal, worst(c, 'title')),
@@ -74,13 +90,14 @@ export function renderOverview(state) {
     row('Meta robots', robotsVal, worst(c, 'robots')),
     row('X-Robots-Tag', xrt, null),
     row('HTTP status', httpVal, state.httpPending ? null : worst(c, 'http')),
+    row('Server HTML', serverVal, rd ? (rd.checks.length ? worst(rd.checks, ...serverAreas) : 'ok') : null),
     row('robots.txt', rt, state.robotsPending ? null : s.robotsTxt && !s.robotsTxt.allowed ? 'error' : 'ok'),
     row('Language', s.lang ? mono(s.lang) : muted('Missing'), worst(c, 'lang')),
     row('Viewport', s.viewport ? mono(s.viewport) : muted('Missing'), worst(c, 'mobile')),
     row('Headings', headingsVal, worst(c, 'headings')),
     row('Images', imgVal, worst(c, 'images')),
     row('Links', linksVal, worst(c, 'links')),
-    row('hreflang', seo.hreflang.length ? `${seo.hreflang.length} alternates` : muted('None'), seo.hreflang.length ? worst(c, 'hreflang') : null),
+    row('hreflang', (seo.hreflang.length ? `${seo.hreflang.length} alternates` : muted('None')) + hlProv, seo.hreflang.length ? worst(c, 'hreflang') : null),
     row('Structured data', schemaVal, schema.counts.errors ? 'error' : schema.counts.warnings ? 'warning' : schema.blocks.length ? 'ok' : null),
     row('Word count', s.wordCount != null ? s.wordCount.toLocaleString() : '—', null),
     s.author && row('Author', esc(s.author), null),
@@ -297,11 +314,18 @@ export function renderSocial(state) {
       <div class="x-body"><div class="x-domain">${esc(domain)}</div><div class="x-title">${esc(tw.title || '')}</div>${large ? '' : `<div class="x-desc">${esc(tw.desc || '')}</div>`}</div>
     </div><p class="hint">twitter:card = ${mono(first(twitter, 'card') || '(none, defaults to summary)')}</p>`;
 
+  const rd = state.rendering;
+  const jsTag = (name) => {
+    const item = rd?.byKey[name];
+    return item && item.status !== 'html' ? provTag(item) : '';
+  };
   const table = (prefix, obj) => {
     const keys = Object.keys(obj);
-    if (!keys.length) return empty(`<p>No ${esc(prefix)} tags.</p>`);
+    const removed = rd ? rd.items.filter((i) => i.area === 'social' && i.status === 'removed' && i.key.startsWith(prefix)) : [];
+    if (!keys.length && !removed.length) return empty(`<p>No ${esc(prefix)} tags.</p>`);
     return `<div class="card kv">${keys
-      .flatMap((k) => obj[k].map((v) => row(`${prefix}${k}`, /^https?:\/\//.test(v) ? link(v) : esc(v), null)))
+      .flatMap((k) => obj[k].map((v) => row(`${prefix}${k}`, (/^https?:\/\//.test(v) ? link(v) : esc(v)) + jsTag(`${prefix}${k}`), null)))
+      .concat(removed.map((i) => row(i.key, muted(i.raw.join(', ')) + provTag(i), null)))
       .join('')}</div>`;
   };
   const checks = state.seo.checks.filter((c) => c.area === 'social');
@@ -319,7 +343,10 @@ export function renderHreflang(state) {
   if (!list.length) return '';
   const checks = state.seo.checks.filter((c) => c.area === 'hreflang');
   return `<div class="section-label">hreflang · ${list.length}</div>${checks.length ? `<div class="card">${issueList(checks)}</div>` : ''}
-    <div class="card kv">${list.map((h) => row(h.lang, `${link(h.href)}${h.self ? ' <span class="tag ok">this page</span>' : ''}`, h.valid ? null : 'error')).join('')}</div>`;
+    <div class="card kv">${list.map((h) => {
+      const item = state.rendering?.byKey[`hreflang:${h.lang.toLowerCase()}`];
+      return row(h.lang, `${link(h.href)}${h.self ? ' <span class="tag ok">this page</span>' : ''}${item && item.status !== 'html' ? provTag(item) : ''}`, h.valid ? null : 'error');
+    }).join('')}</div>`;
 }
 
 export function renderTools(state) {

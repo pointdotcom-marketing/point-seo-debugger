@@ -356,3 +356,10 @@ a { color: var(--accent); text-decoration: none; }
 .tabs.fade-left { mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
 .tabs.fade-left.fade-right { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
 .share-img.none, .x-img.none { font-size: 12px; }
+
+/* ---- Server HTML vs rendered ---- */
+.prov { display: inline-block; font-size: 10px; font-weight: 500; padding: 0 5px; margin-left: 4px; border-radius: 4px; line-height: 15px; white-space: nowrap; vertical-align: 1px; background: var(--info-bg); color: var(--info); }
+.prov.html { background: var(--ok-bg); color: var(--ok); }
+.prov.added, .prov.changed { background: var(--warn-bg); color: var(--warn); }
+.prov.removed { background: var(--error-bg); color: var(--error); }
+details.server-version summary { cursor: pointer; color: var(--muted); font-size: 12px; }
