@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SEO Lens</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="top">
+    <div class="page">
+      <div class="page-title" id="page-title">SEO Lens</div>
+      <div class="page-url" id="page-url"></div>
+    </div>
+    <button class="icon-btn" id="rescan" title="Re-scan page" aria-label="Re-scan page">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>
+    </button>
+  </header>
+
+  <section class="summary" id="summary" hidden></section>
+  <nav class="tabs" role="tablist" id="tabs" hidden></nav>
+
+  <main id="content">
+    <div class="empty">Scanning…</div>
+  </main>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
