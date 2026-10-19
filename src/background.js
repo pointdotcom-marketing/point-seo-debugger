@@ -25,7 +25,7 @@ function updateBadge(tabId, schema, seo) {
     color = '#b06000';
   }
   const lines = [
-    'SEO Lens',
+    'Point SEO Debugger',
     seo && !seo.summary.indexable ? 'NOT INDEXABLE' : null,
     `${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'} (on-page checks)`,
     `${schema.counts.blocks} JSON-LD block${schema.counts.blocks === 1 ? '' : 's'}, ${schema.features.length} rich result item${schema.features.length === 1 ? '' : 's'}`,

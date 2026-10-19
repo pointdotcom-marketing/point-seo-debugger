@@ -1,4 +1,4 @@
-# SEO Lens
+# Point SEO Debugger
 
 A Chrome extension for checking a page's SEO setup while you edit it. Click the toolbar icon to open a side panel. The panel stays open as you move between tabs and updates live as the page changes.
 
@@ -18,13 +18,13 @@ The toolbar badge shows the error count for the current tab (red), or the warnin
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and pick this folder (the one with `manifest.json`).
-3. Pin **SEO Lens** from the puzzle-piece menu, then click it on any page.
+3. Pin **Point SEO Debugger** from the puzzle-piece menu, then click it on any page.
 
 To check local HTML files, open the extension's **Details** and turn on **Allow access to file URLs**.
 
 After pulling changes, click the reload icon on the extension's card in `chrome://extensions`.
 
-To share a build, run `npm run package` and send `dist/seo-lens-<version>.zip`. Recipients unzip it and use **Load unpacked**. The same zip can be uploaded as a private Chrome Web Store listing for your organization.
+To share a build, run `npm run package` and send `dist/point-seo-debugger-<version>.zip`. Recipients unzip it and use **Load unpacked**. The same zip can be uploaded as a private Chrome Web Store listing for your organization.
 
 ## What the schema checks cover
 

@@ -1,5 +1,5 @@
 {
-  "name": "seo-lens",
+  "name": "point-seo-debugger",
   "version": "0.1.0",
   "private": true,
   "description": "One-click SEO check for the current page: meta tags, headings, images, links, social previews, and JSON-LD validated against schema.org and Google rich result rules.",

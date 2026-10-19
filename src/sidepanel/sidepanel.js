@@ -79,7 +79,7 @@ async function refresh({ force = false } = {}) {
   if (tab?.id !== state.tabId) resetPerPage();
   state.tabId = tab?.id ?? null;
   if (!tab?.id || !/^(https?|file):/.test(tab.url || '')) {
-    showUnavailable(tab, 'SEO Lens only runs on web pages (http, https, or file).');
+    showUnavailable(tab, 'Point SEO Debugger only runs on web pages (http, https, or file).');
     return;
   }
   try {
@@ -87,7 +87,7 @@ async function refresh({ force = false } = {}) {
     if (!page) throw new Error('No response from page');
     show(page, { force });
   } catch (e) {
-    const fileHint = tab.url.startsWith('file:') ? ' For local files, enable "Allow access to file URLs" for SEO Lens in chrome://extensions.' : '';
+    const fileHint = tab.url.startsWith('file:') ? ' For local files, enable "Allow access to file URLs" for Point SEO Debugger in chrome://extensions.' : '';
     showUnavailable(tab, `Couldn't read this page (${e.message}).${fileHint}`);
   }
 }
@@ -121,7 +121,7 @@ function analyze() {
 
 function showUnavailable(tab, message) {
   state.page = null;
-  $('page-title').textContent = tab?.title || 'SEO Lens';
+  $('page-title').textContent = tab?.title || 'Point SEO Debugger';
   $('page-url').textContent = tab?.url || '';
   $('summary').hidden = true;
   $('tabs').hidden = true;

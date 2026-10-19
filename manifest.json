@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "SEO Lens",
+  "name": "Point SEO Debugger",
   "version": "0.1.0",
   "description": "One-click SEO check for the current page: meta tags, headings, images, links, social previews, and JSON-LD validated against schema.org and Google rich result rules.",
   "minimum_chrome_version": "116",
@@ -31,7 +31,7 @@
     "default_path": "src/sidepanel/sidepanel.html"
   },
   "action": {
-    "default_title": "SEO Lens",
+    "default_title": "Point SEO Debugger",
     "default_icon": {
       "16": "src/icons/icon-16.png",
       "32": "src/icons/icon-32.png",

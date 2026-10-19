@@ -35,7 +35,7 @@ const port = server.address().port;
 const origin = `http://${HOSTNAME}:${port}`;
 
 // --- Browser ---------------------------------------------------------------
-const userDataDir = await mkdtemp(join(tmpdir(), 'seo-lens-e2e-'));
+const userDataDir = await mkdtemp(join(tmpdir(), 'point-seo-debugger-e2e-'));
 const context = await chromium.launchPersistentContext(userDataDir, {
   executablePath: chromiumPath(),
   headless: true,
