@@ -14,6 +14,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const fixtures = join(root, 'tests/fixtures');
 const shots = process.env.SCREENSHOT_DIR;
 const HOSTNAME = 'www.example-home.com';
+// Plays the Webflow staging site: same pages, with unpublished edits and a canonical pointing live.
+const STAGING = 'example-home.webflow.io';
+const stagingEdits = (html, liveHost) =>
+  html
+    .replace('<title>How home equity investments work | Example</title>', '<title>Home equity investments, explained | Example</title>')
+    .replace('"headline": "How home equity investments work"', '"headline": "Home equity investments, explained"')
+    .replace(/<link rel="canonical" href="http:\/\/[^/]+/, `<link rel="canonical" href="http://${liveHost}`);
 
 // --- Fixture server --------------------------------------------------------
 const server = createServer(async (req, res) => {
@@ -27,7 +34,8 @@ const server = createServer(async (req, res) => {
   if (path === '/assets/icon.png') return send(200, await readFile(join(root, 'src/icons/icon-128.png')), { 'content-type': 'image/png' });
   const file = { '/kitchen-sink.html': 'kitchen-sink.html', '/clean.html': 'clean.html', '/noindex.html': 'noindex.html', '/blocked/page.html': 'clean.html', '/': 'clean.html', '/guides/': 'clean.html' }[path];
   if (!file) return send(404, 'Not found');
-  const html = (await readFile(join(fixtures, file), 'utf8')).replaceAll('HOST', host);
+  let html = (await readFile(join(fixtures, file), 'utf8')).replaceAll('HOST', host);
+  if (host.startsWith(STAGING)) html = stagingEdits(html, `${HOSTNAME}:${port}`);
   send(200, html, path === '/noindex.html' ? { 'x-robots-tag': 'noindex' } : {});
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -44,7 +52,7 @@ const context = await chromium.launchPersistentContext(userDataDir, {
     `--disable-extensions-except=${root}`,
     `--load-extension=${root}`,
     // Resolve the fixture host locally and keep every other host offline so runs are deterministic.
-    `--host-resolver-rules=MAP ${HOSTNAME} 127.0.0.1, MAP * ~NOTFOUND`,
+    `--host-resolver-rules=MAP ${HOSTNAME} 127.0.0.1, MAP ${STAGING} 127.0.0.1, MAP * ~NOTFOUND`,
   ],
 });
 
@@ -216,6 +224,80 @@ try {
   await check('robots.txt Disallow makes the page not indexable', () => {
     assert.equal(r.seo.summary.indexable, false);
     assert.match(text(r), /robots\.txt blocks Googlebot.*Disallow: \/blocked\//);
+  });
+
+  // ---- Snapshots ------------------------------------------------------------
+  const snapUrl = `${origin}/clean.html?snapshot`;
+  const sn = await openPanel(snapUrl);
+  await check('snapshot: save, edit the page, see what changed', async () => {
+    await sn.panel.click('button[data-tab="changes"]');
+    assert.match(await sn.panel.textContent('#content'), /No snapshot of this page/);
+    await sn.panel.click('[data-save-snapshot]');
+    await sn.panel.waitForSelector('#snapshot-card .card-title:has-text("No changes since snapshot")');
+    const stored = await sw.evaluate(async () => (await chrome.storage.local.get('snapshots')).snapshots);
+    assert.equal(stored[snapUrl]?.length, 1);
+    assert.match(await sn.panel.textContent('#summary'), /Matches snapshot \(just now\)/);
+
+    // "Republish": change the title, a JSON-LD property and a heading.
+    await sn.page.evaluate(() => {
+      document.title = 'Home equity investments, explained | Example';
+      const ld = document.querySelector('script[type="application/ld+json"]');
+      ld.textContent = ld.textContent.replace('"headline": "How home equity investments work"', '"headline": "HEIs, explained"');
+      document.querySelector('h2').textContent = 'Fees';
+    });
+    await sn.panel.waitForSelector('#snapshot-card .card-title:has-text("Changed since snapshot (just now)")', { timeout: 8000 });
+    assert.match(await sn.panel.textContent('#summary'), /Changed since snapshot \(just now\)/);
+    const card = await sn.panel.textContent('#snapshot-card');
+    assert.match(card, /TitleHow home equity investments work \| ExampleHome equity investments, explained \| Example/);
+    assert.match(card, /@graph\[Article\]\.headline/);
+    assert.match(card, /"?How home equity investments work"? → "?HEIs, explained/);
+    assert.match(card, /−H2 Costs/);
+    assert.match(card, /\+H2 Fees/);
+    const badge = await sn.panel.textContent('button[data-tab="changes"] .count');
+    assert.ok(+badge >= 4, `changes badge: ${badge}`);
+  });
+  await check('snapshot: a second snapshot becomes the baseline', async () => {
+    await sn.panel.click('[data-save-snapshot]');
+    await sn.panel.waitForSelector('#snapshot-card .card-title:has-text("No changes since snapshot")');
+    assert.equal(await sn.panel.locator('[data-snapshot-select] option').count(), 2);
+    await sn.panel.selectOption('[data-snapshot-select]', '1');
+    await sn.panel.waitForSelector('#snapshot-card .card-title:has-text("Changed since snapshot")');
+  });
+  if (shots) await sn.panel.screenshot({ path: join(shots, 'changes-snapshot.png'), fullPage: true });
+
+  // ---- Staging vs live compare -----------------------------------------------
+  const stagingUrl = `http://${STAGING}:${port}/clean.html`;
+  const st = await openPanel(stagingUrl);
+  await check('compare: staging page suggests its live counterpart and diffs it', async () => {
+    await st.panel.click('button[data-tab="changes"]');
+    assert.equal(await st.panel.inputValue('#compare-url'), `${origin}/clean.html`, 'suggested from the canonical');
+    const tabsBefore = await sw.evaluate(async () => (await chrome.tabs.query({})).length);
+    await st.panel.click('[data-compare-form] button[type="submit"]');
+    await st.panel.waitForSelector('#compare-card .diff', { timeout: 30000 });
+    const card = await st.panel.textContent('#compare-card');
+    assert.match(card, new RegExp(`${HOSTNAME}:${port} → ${STAGING}:${port} \\(this tab\\)`), 'live is "before", staging "after"');
+    assert.match(card, /TitleHow home equity investments work \| ExampleHome equity investments, explained \| Example/);
+    assert.match(card, /@graph\[Article\]\.headline/);
+    assert.doesNotMatch(card, /Canonical/, 'host names are aliased, so the canonical matches');
+    assert.doesNotMatch(card, /@id/, 'JSON-LD @ids are aliased too');
+    // The background tab is closed once collected.
+    await st.panel.waitForFunction(async (n) => (await chrome.tabs.query({})).length === n, tabsBefore, { timeout: 5000 });
+  });
+  if (shots) await st.panel.screenshot({ path: join(shots, 'changes-compare.png'), fullPage: true });
+  await check('compare: remembering the host pair makes live suggest staging', async () => {
+    await st.panel.click('[data-save-pair]');
+    await st.panel.waitForFunction(async () => (await chrome.storage.local.get('hostPairs')).hostPairs?.length === 1);
+    const pairs = await sw.evaluate(async () => (await chrome.storage.local.get('hostPairs')).hostPairs);
+    assert.deepEqual(pairs, [{ staging: `${STAGING}:${port}`, production: `${HOSTNAME}:${port}` }]);
+    const live = await openPanel(`${origin}/guides/`);
+    await live.panel.click('button[data-tab="changes"]');
+    assert.equal(await live.panel.inputValue('#compare-url'), `http://${STAGING}:${port}/guides/`);
+    await live.panel.click('[data-compare-form] button[type="submit"]');
+    await live.panel.waitForSelector('#compare-card .diff', { timeout: 30000 });
+    const card = await live.panel.textContent('#compare-card');
+    assert.match(card, new RegExp(`${HOSTNAME}:${port} \\(this tab\\) → ${STAGING}:${port}`));
+    assert.match(card, /@graph\[Article\]\.headline/);
+    assert.doesNotMatch(card, /Remember/, 'pair already saved');
   });
 
   // ---- Non-web page -------------------------------------------------------

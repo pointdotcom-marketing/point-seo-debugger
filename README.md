@@ -5,6 +5,7 @@ A Chrome extension for checking a page's SEO setup while you edit it. Click the 
 | Tab | What it shows |
 | --- | --- |
 | **Overview** | Indexable or not, a Google search-result preview, title and description length (characters and pixel width against Google's truncation point), canonical, meta robots, `X-Robots-Tag` header, HTTP status, robots.txt verdict for Googlebot, language, viewport, hreflang, and a ranked list of every on-page issue |
+| **Changes** | Before/after snapshots of the page, and a staging ↔ live comparison. See [Checking your changes](#checking-your-changes). |
 | **Schema** | Every JSON-LD block and Microdata/RDFa item, checked against the schema.org vocabulary and against Google's rich result requirements. Each block shows whether it's *Eligible*, *Not eligible*, *Limited*, or *No longer shown*, with the reason. |
 | **Headings** | Counts for H1–H6 and the outline in page order, with skipped levels and empty headings flagged. Click a heading to scroll to it on the page. |
 | **Images** | Every image, with filters for missing alt, empty alt, filename-as-alt, and missing width/height. Click an image to find it on the page. Export as CSV. |
@@ -13,6 +14,25 @@ A Chrome extension for checking a page's SEO setup while you edit it. Click the 
 | **Tools** | One-click links to the Rich Results Test, PageSpeed Insights, Schema.org Validator, W3C validators, Facebook and LinkedIn debuggers, robots.txt, sitemaps, and Wayback Machine |
 
 The toolbar badge shows the error count for the current tab (red), or the warning count (amber), or ✓ when clean. Hover the icon for a summary.
+
+## Checking your changes
+
+**Snapshots.** Before you edit a page, open **Changes** and click **Save snapshot**. After you edit and republish, reload the page: the summary row shows *Changed since snapshot (5 min ago)* and the Changes tab lists what's different:
+
+- title, description, canonical, meta robots, language, hreflang, and every `og:`/`twitter:` tag, old → new
+- headings added and removed
+- link and image counts (total, internal, external, nofollow, missing alt), with the delta
+- structured data, per block, as property paths: `@graph[Article].headline` changed, `offers.price` added, `image` removed. Nodes in a `@graph` are matched by `@id` or `@type`, so reordering them doesn't show as a change.
+- issues fixed and new issues (errors and warnings)
+
+The last 5 snapshots per URL are kept (pick an older one from the dropdown). Snapshots live in `chrome.storage.local`, capped at about 4 MB in total; the oldest are dropped first. They skip the HTTP status, `X-Robots-Tag`, and robots.txt checks, so they compare only what's on the page.
+
+**Compare with another URL.** Under **Compare with another URL**, enter any URL and click **Compare**. SEO Lens loads it in a background tab, collects it the same way, closes the tab, and shows the same diff. The URL is filled in for you when:
+
+- the page is on `*.webflow.io` and its canonical (or `og:url`) points at another host, or
+- you've saved a staging ↔ live host pair (**Edit staging ↔ live hosts**, or the **Remember … as staging ↔ live** link after a compare). Pairs work in both directions.
+
+Live is always shown as *before* and staging as *after*, so "fixed" and "new" issues describe what publishing staging would change. URLs on the staging host are rewritten onto the live host before checking, so the canonical, `@id`s, and internal links don't show up as differences. Password-protected staging works as long as you're signed in, since the background tab uses your browser session.
 
 ## Install (unpacked)
 
@@ -57,7 +77,7 @@ npm install
 npm test
 ```
 
-Runs the unit tests for the validator, SEO checks, and robots.txt matching.
+Runs the unit tests for the validator, SEO checks, robots.txt matching, and snapshot diffs.
 
 ```bash
 npm run test:e2e
@@ -75,6 +95,7 @@ src/
   lib/google-rules.js    Google rich result requirements, one entry per feature
   lib/seo.js             on-page SEO checks
   lib/robots.js          robots.txt parsing and matching
+  lib/diff.js            snapshots, snapshot diffs, staging ↔ live URL mapping
   lib/vocab-data.js      compiled schema.org vocabulary (generated)
   sidepanel/             the UI
 scripts/                 vocab, icon, and zip builders
