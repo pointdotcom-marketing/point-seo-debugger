@@ -7,12 +7,15 @@ import { renderSchema } from './views-schema.js';
 import { analyzeAiAccess, robotsSnippet } from '../lib/ai-crawlers.js';
 import { loadAiFiles, probeBots } from './ai.js';
 import { renderAi } from './views-ai.js';
+import { buildSnapshot, diffSnapshots, addSnapshot, snapshotKey, timeAgo, counterpartUrl, normalizeHost, isWebflowStaging, aliasOrigin } from '../lib/diff.js';
+import { renderChanges } from './views-changes.js';
 import { renderOverview, renderHeadings, renderImages, renderLinks, renderSocial, renderTools, filteredImages, filteredLinks } from './views-seo.js';
 
 const $ = (id) => document.getElementById(id);
 
 const TABS = [
   ['overview', 'Overview'],
+  ['changes', 'Changes'],
   ['schema', 'Schema'],
   ['headings', 'Headings'],
   ['images', 'Images'],
@@ -50,6 +53,18 @@ const state = {
   aiProbes: null,
   aiProbeRunning: false,
   aiPolicy: 'block-training',
+  // Snapshots / compare (Changes tab).
+  current: null,
+  snapshots: [],
+  snapshotsFor: null,
+  snapshotIndex: 0,
+  snapshotDiff: null,
+  hostPairs: [],
+  showPairs: false,
+  pairDraft: { staging: '', production: '' },
+  compare: { input: null, pending: null, error: null, result: null },
+  compareSuggestion: null,
+  compareDiff: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -119,8 +134,11 @@ function show(page, { force = false } = {}) {
   if (urlChanged) {
     state.linkStatus = new Map();
     state.aiProbes = null;
+    state.compare = { input: null, pending: null, error: null, result: null };
   }
   analyze();
+  state.current = snapshotOf(page, state.schema);
+  if (snapshotKey(page.url) !== state.snapshotsFor) loadSnapshots();
   render();
   loadNetworkInfo(force);
   loadOgImage();
@@ -337,10 +355,159 @@ async function checkLinks() {
 }
 
 // ---------------------------------------------------------------------------
+// Snapshots and staging ↔ live compare.
+
+// Snapshots leave out the HTTP/robots.txt checks so they compare the page itself, whether or not
+// the network checks had finished when each side was taken.
+function snapshotOf(page, schema = analyzePage(page)) {
+  return buildSnapshot(page, schema, analyzeSeo(page.seo, page.url, { measure }));
+}
+
+async function loadSnapshots() {
+  const key = snapshotKey(state.page.url);
+  state.snapshotsFor = key;
+  const { snapshots = {} } = await chrome.storage.local.get('snapshots');
+  if (state.snapshotsFor !== key) return;
+  state.snapshots = snapshots[key] || [];
+  state.snapshotIndex = 0;
+  render();
+}
+
+async function saveSnapshot() {
+  const snap = snapshotOf(state.page, state.schema);
+  const { snapshots = {} } = await chrome.storage.local.get('snapshots');
+  const store = addSnapshot(snapshots, snap);
+  await chrome.storage.local.set({ snapshots: store });
+  state.snapshots = store[snapshotKey(snap.url)] || [];
+  state.snapshotIndex = 0;
+  render();
+}
+
+async function deleteSnapshots() {
+  const key = snapshotKey(state.page.url);
+  const { snapshots = {} } = await chrome.storage.local.get('snapshots');
+  delete snapshots[key];
+  await chrome.storage.local.set({ snapshots });
+  state.snapshots = [];
+  render();
+}
+
+async function loadHostPairs() {
+  const { hostPairs = [] } = await chrome.storage.local.get('hostPairs');
+  state.hostPairs = hostPairs;
+  if (state.page) render();
+}
+
+async function saveHostPairs(pairs) {
+  state.hostPairs = pairs;
+  await chrome.storage.local.set({ hostPairs: pairs });
+  render();
+}
+
+function waitForLoad(tabId, ms) {
+  return new Promise((resolve, reject) => {
+    const done = (fn, value) => {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      fn(value);
+    };
+    const listener = (id, info) => id === tabId && info.status === 'complete' && done(resolve);
+    const timer = setTimeout(() => done(reject, new Error('timed out loading the page')), ms);
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+/** Loads a URL in a background tab, collects it with the content script, and closes the tab. */
+async function collectInBackground(url) {
+  const tab = await chrome.tabs.create({ url, active: false });
+  try {
+    await waitForLoad(tab.id, 30000);
+    // Give scripts that inject JSON-LD after load a moment, as the live view would.
+    await new Promise((r) => setTimeout(r, 600));
+    const page = await collect(tab.id);
+    if (!page) throw new Error('no response from the page');
+    return page;
+  } finally {
+    chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
+const isStagingHost = (host) => isWebflowStaging(host) || state.hostPairs.some((p) => p.staging === host);
+
+async function compareWith(input) {
+  let url;
+  try {
+    url = new URL(input).href;
+  } catch {
+    state.compare = { ...state.compare, error: 'Enter a full URL, starting with https://', result: null };
+    return render();
+  }
+  const forUrl = state.page.url;
+  state.compare = { input, pending: url, error: null, result: null };
+  render();
+  try {
+    const page = await collectInBackground(url);
+    if (state.page?.url !== forUrl) return;
+    const otherOrigin = new URL(page.url).origin;
+    const thisOrigin = new URL(forUrl).origin;
+    const otherHost = new URL(page.url).host;
+    const thisHost = new URL(forUrl).host;
+    // Live is "before", staging is "after", so fixed/new issues read as what publishing would change.
+    const otherIsStaging = isStagingHost(otherHost) && !isStagingHost(thisHost);
+    // The staging side is analyzed as if it were on the live origin, so host names (canonical,
+    // @id, internal links) don't show up as changes or as canonical warnings.
+    const other = snapshotOf(otherIsStaging ? aliasOrigin(page, otherOrigin, thisOrigin) : page);
+    const hasPair = state.hostPairs.some((p) => [p.staging, p.production].includes(thisHost) && [p.staging, p.production].includes(otherHost));
+    const webflow = [thisHost, otherHost].filter(isWebflowStaging);
+    state.compare = {
+      input,
+      pending: null,
+      error: null,
+      result: {
+        other,
+        otherIsStaging,
+        otherOrigin,
+        thisOrigin,
+        requestedUrl: url,
+        loadedUrl: page.url,
+        beforeLabel: otherIsStaging ? `${thisHost} (this tab)` : otherHost,
+        afterLabel: otherIsStaging ? otherHost : `${thisHost} (this tab)`,
+        aliased: otherOrigin !== thisOrigin ? new URL(otherIsStaging ? forUrl : page.url).host : null,
+        offerPair: !hasPair && webflow.length === 1 && thisHost !== otherHost ? { staging: webflow[0], production: webflow[0] === thisHost ? otherHost : thisHost } : null,
+      },
+    };
+  } catch (e) {
+    if (state.page?.url !== forUrl) return;
+    state.compare = { input, pending: null, error: `Couldn't load ${url}: ${e.message}`, result: null };
+  }
+  render();
+}
+
+// Diffs are recomputed on every render, so they follow live edits on this tab.
+function computeDiffs() {
+  const snap = state.snapshots[state.snapshotIndex];
+  state.snapshotDiff = snap && state.current ? diffSnapshots(snap, state.current) : null;
+  const r = state.compare.result;
+  if (r && state.current) {
+    if (r.otherIsStaging) state.compareDiff = diffSnapshots(state.current, r.other);
+    else {
+      if (r.aliasedPage !== state.page) {
+        r.aliasedPage = state.page;
+        r.aliasedCurrent = snapshotOf(aliasOrigin(state.page, r.thisOrigin, r.otherOrigin));
+      }
+      state.compareDiff = diffSnapshots(r.other, r.aliasedCurrent);
+    }
+  } else state.compareDiff = null;
+  const og = state.seo?.social.og;
+  state.compareSuggestion = state.page ? counterpartUrl(state.page.url, state.hostPairs, { canonical: state.seo?.summary.canonical, ogUrl: og?.url?.[0] }) : null;
+}
+
+// ---------------------------------------------------------------------------
 // Rendering.
 
 function render() {
   if (!state.page) return;
+  computeDiffs();
   const { page, schema, seo } = state;
   $('page-title').textContent = page.title || page.url;
   $('page-url').textContent = page.url;
@@ -356,6 +523,7 @@ function render() {
     `<span class="stat"><strong>${schema.counts.blocks}</strong> JSON-LD</span>`,
     schema.counts.microdata ? `<span class="stat"><strong>${schema.counts.microdata}</strong> Microdata</span>` : '',
     schema.counts.rdfa ? `<span class="stat"><strong>${schema.counts.rdfa}</strong> RDFa</span>` : '',
+    snapshotChip(),
   ].join('');
 
   // Tab badges only appear when there's something to fix, to keep the tab bar narrow.
@@ -370,6 +538,7 @@ function render() {
     links: pick(areaErrors('links'), areaWarnings('links')),
     social: pick(areaErrors('social'), areaWarnings('social')),
     ai: state.ai ? pick(state.ai.checks.filter((c) => c.severity === 'error').length, state.ai.checks.filter((c) => c.severity === 'warning').length) : null,
+    changes: state.snapshotDiff?.total ? ['', state.snapshotDiff.total] : null,
   };
   $('tabs').hidden = false;
   $('tabs').innerHTML = TABS.map(([id, label]) => {
@@ -380,9 +549,13 @@ function render() {
 
   const scroll = document.scrollingElement.scrollTop;
   const sameTab = $('content').dataset.tab === state.tab;
+  // Live updates re-render while someone may be typing in a Changes tab field.
+  const active = document.activeElement;
+  const focus = active?.id && $('content').contains(active) ? { id: active.id, start: active.selectionStart, end: active.selectionEnd } : null;
   $('content').dataset.tab = state.tab;
   $('content').innerHTML = {
     overview: renderOverview,
+    changes: renderChanges,
     schema: renderSchema,
     headings: renderHeadings,
     images: renderImages,
@@ -392,7 +565,18 @@ function render() {
     tools: renderTools,
   }[state.tab](state);
   document.scrollingElement.scrollTop = sameTab ? scroll : 0;
+  if (focus && $(focus.id)) {
+    $(focus.id).focus();
+    if (focus.start != null) $(focus.id).setSelectionRange(focus.start, focus.end);
+  }
   fitSerp();
+}
+
+function snapshotChip() {
+  const snap = state.snapshots[state.snapshotIndex];
+  if (!snap || !state.snapshotDiff) return '';
+  const changed = state.snapshotDiff.total > 0;
+  return `<button class="stat ${changed ? 'changed' : ''}" data-goto="changes" title="Open the Changes tab">${changed ? 'Changed since snapshot' : 'Matches snapshot'} (${esc(timeAgo(snap.takenAt))})</button>`;
 }
 
 function updateTabFade() {
@@ -422,9 +606,27 @@ $('tabs').addEventListener('click', (e) => {
   $('tabs').querySelector(`[data-tab="${state.tab}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 });
 
+$('summary').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-goto]');
+  if (!btn || !state.page) return;
+  state.tab = btn.dataset.goto;
+  render();
+});
+
 $('content').addEventListener('click', (e) => {
   const t = (sel) => e.target.closest(sel);
   let el;
+  if ((el = t('[data-save-snapshot]'))) return saveSnapshot();
+  if ((el = t('[data-delete-snapshots]'))) return deleteSnapshots();
+  if ((el = t('[data-toggle-pairs]'))) {
+    state.showPairs = !state.showPairs;
+    return render();
+  }
+  if ((el = t('[data-remove-pair]'))) return saveHostPairs(state.hostPairs.filter((_, i) => i !== +el.dataset.removePair));
+  if ((el = t('[data-save-pair]'))) {
+    const [staging, production] = el.dataset.savePair.split('|');
+    return saveHostPairs([...state.hostPairs.filter((p) => p.staging !== staging), { staging, production }]);
+  }
   if ((el = t('[data-schema-view]'))) {
     state.schemaView = el.dataset.schemaView;
     return render();
@@ -485,6 +687,45 @@ $('content').addEventListener('click', (e) => {
   }
 });
 
+$('content').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (e.target.matches('[data-compare-form]')) return compareWith($('compare-url').value.trim());
+  if (e.target.matches('[data-pair-form]')) {
+    const staging = normalizeHost(state.pairDraft.staging);
+    const production = normalizeHost(state.pairDraft.production);
+    if (!staging || !production || staging === production) return;
+    state.pairDraft = { staging: '', production: '' };
+    return saveHostPairs([...state.hostPairs.filter((p) => p.staging !== staging), { staging, production }]);
+  }
+});
+
+$('content').addEventListener('input', (e) => {
+  const id = e.target.id;
+  if (id === 'compare-url') state.compare.input = e.target.value;
+  else if (id === 'pair-staging') state.pairDraft.staging = e.target.value;
+  else if (id === 'pair-production') state.pairDraft.production = e.target.value;
+});
+
+$('content').addEventListener('change', (e) => {
+  if (!e.target.matches('[data-snapshot-select]')) return;
+  state.snapshotIndex = +e.target.value;
+  render();
+});
+
+// Other panels (other windows) may save snapshots or host pairs.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (changes.hostPairs) loadHostPairs();
+  if (changes.snapshots && state.page) {
+    state.snapshots = changes.snapshots.newValue?.[snapshotKey(state.page.url)] || [];
+    state.snapshotIndex = Math.min(state.snapshotIndex, Math.max(0, state.snapshots.length - 1));
+    render();
+  }
+});
+
+// Keeps "(5 min ago)" current.
+setInterval(() => state.snapshots.length && render(), 60000);
+
 $('rescan').addEventListener('click', () => refresh({ force: true }));
 
 chrome.tabs.onActivated.addListener(() => pinnedTabId || refresh());
@@ -496,6 +737,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg?.type === 'seo-lens:page' && sender.tab?.id === state.tabId) show(msg.data);
 });
 
+loadHostPairs();
 refresh();
 
 // Exposed for the end-to-end test.
