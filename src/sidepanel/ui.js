@@ -1,4 +1,5 @@
 // Small rendering helpers shared by the side panel views.
+import { PROVENANCE_LABEL } from '../lib/raw-html.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 export const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
@@ -54,3 +55,16 @@ export function hostOf(url) {
 }
 
 export const empty = (html) => `<div class="empty">${html}</div>`;
+
+/** "in HTML" / "added by JavaScript" / … tag for an item from compareRawRendered. */
+export function provTag(item) {
+  if (!item?.status) return '';
+  const raw = Array.isArray(item.raw) ? item.raw.join(', ') : item.raw;
+  const title = item.status === 'changed' && raw != null ? `Server HTML: ${raw}` : item.status === 'html' ? 'Present in the HTML the server sent' : PROVENANCE_TITLE[item.status];
+  return `<span class="prov ${item.status}" title="${esc(title)}">${PROVENANCE_LABEL[item.status]}</span>`;
+}
+const PROVENANCE_TITLE = {
+  added: 'Not in the HTML the server sent; JavaScript adds it',
+  changed: 'JavaScript changes the value the server sent',
+  removed: 'In the HTML the server sent, but JavaScript removes it',
+};

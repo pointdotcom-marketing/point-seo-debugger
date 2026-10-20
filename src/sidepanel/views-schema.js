@@ -1,6 +1,6 @@
 // Schema tab: Google rich result eligibility, schema.org issues, and the raw JSON-LD (plus Microdata
 // and RDFa items, shown as the JSON-LD they were converted to).
-import { esc, plural, issueList, chips, empty } from './ui.js';
+import { esc, plural, issueList, chips, empty, provTag } from './ui.js';
 
 const STATUS_LABEL = {
   valid: 'Eligible',
@@ -12,6 +12,8 @@ const STATUS_LABEL = {
 const STATUS_ORDER = { invalid: 0, warnings: 1, valid: 2, restricted: 3, deprecated: 4 };
 const FORMAT_LABEL = { jsonld: 'JSON-LD', microdata: 'Microdata', rdfa: 'RDFa' };
 const formatTag = (format) => `<span class="format-tag ${esc(format)}">${FORMAT_LABEL[format] || esc(format)}</span>`;
+// JSON-LD blocks come first in schema.blocks, in page order, so b.index lines up with the comparison.
+const blockProv = (state, b) => (b.format === 'jsonld' ? state.rendering?.blocks[b.index] : null);
 
 export function schemaIssues(result) {
   return [...result.pageIssues, ...result.blocks.flatMap((b) => b.issues), ...result.features.flatMap((f) => f.issues)];
@@ -49,7 +51,7 @@ function renderGoogle(state) {
       const sub = [f.entityType, f.entityName && `“${f.entityName}”`, f.blockLabel].filter(Boolean).join(' · ');
       return `<article class="card">
         <div class="card-head">
-          <div class="grow"><div class="card-title">${esc(f.name)} ${formatTag(source.format)}</div><div class="card-sub" title="${esc(f.path)}">${esc(sub)}</div></div>
+          <div class="grow"><div class="card-title">${esc(f.name)} ${formatTag(source.format)}${provTag(blockProv(state, source))}</div><div class="card-sub" title="${esc(f.path)}">${esc(sub)}</div></div>
           <span class="chip ${chip}">${STATUS_LABEL[chip]}</span>
         </div>
         ${f.statusNote ? `<div class="card-note">${esc(f.statusNote)}</div>` : ''}
@@ -104,7 +106,7 @@ function renderRaw(text, badLine) {
 
 function renderSource(state) {
   const r = state.schema;
-  if (!r.blocks.length) return empty('<p>This page has no JSON-LD, Microdata or RDFa.</p>');
+  if (!r.blocks.length && !state.rendering?.removedBlocks.length) return empty('<p>This page has no JSON-LD, Microdata or RDFa.</p>');
   return (
     `<div class="row-actions"><button class="link-btn" data-copy-all-ld>Copy all as &lt;script&gt; tags</button></div>` +
     r.blocks
@@ -112,16 +114,27 @@ function renderSource(state) {
         const errs = b.issues.filter((i) => i.severity === 'error').length;
         const warns = b.issues.filter((i) => i.severity === 'warning').length;
         const body = b.parseError ? renderRaw(b.text, b.parseError.location?.line) : highlightJson(JSON.stringify(b.data, null, 2));
+        const prov = blockProv(state, b);
         return `<article class="card">
           <div class="card-head">
-            <div class="grow"><div class="card-title">${esc(b.label)} ${formatTag(b.format)}</div>
+            <div class="grow"><div class="card-title">${esc(b.label)} ${formatTag(b.format)}${provTag(prov)}</div>
               <div class="card-sub">${esc(b.types.join(', ') || 'untyped')} · in &lt;${esc(b.location || '?')}&gt; · ${plural(errs, 'error')}, ${plural(warns, 'warning')}</div></div>
             <button class="link-btn" data-copy-block="${b.index}">Copy</button>
           </div>
           ${b.format === 'jsonld' ? '' : `<div class="card-note">Converted from ${FORMAT_LABEL[b.format]} to the equivalent JSON-LD.</div>`}
           <pre class="code">${body}</pre>
+          ${prov?.status === 'changed' ? `<details class="card-note server-version"><summary>Server HTML version</summary><pre class="code">${renderRaw(prov.raw.trim())}</pre></details>` : ''}
         </article>`;
       })
+      .join('') +
+    (state.rendering?.removedBlocks || [])
+      .map(
+        (b) => `<article class="card">
+          <div class="card-head"><div class="grow"><div class="card-title">Server HTML block ${formatTag('jsonld')}${provTag({ status: 'removed' })}</div>
+            <div class="card-sub">${esc(b.types.join(', ') || 'untyped')} · not on the rendered page</div></div></div>
+          <pre class="code">${renderRaw(b.text.trim())}</pre>
+        </article>`,
+      )
       .join('')
   );
 }

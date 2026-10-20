@@ -163,6 +163,37 @@ try {
     assert.equal(await ks.panel.locator('article.card', { hasText: 'Microdata item 1' }).locator('.format-tag').first().textContent(), 'Microdata');
   });
 
+  await check('kitchen sink: server HTML vs rendered provenance', async () => {
+    await ks.panel.waitForFunction(() => globalThis.__seoLensState.rendering?.blocks.length === 6, null, { timeout: 8000 });
+    const rd = await ks.panel.evaluate(() => globalThis.__seoLensState.rendering);
+    assert.deepEqual(rd.blocks.map((b) => b.status), ['html', 'html', 'html', 'html', 'html', 'added'], 'only the injected VideoObject block is added by JavaScript');
+    assert.deepEqual(rd.removedBlocks, []);
+    for (const key of ['title', 'description', 'canonical', 'og:title', 'twitter:card', 'hreflang:en-us']) assert.equal(rd.byKey[key]?.status, 'html', key);
+    assert.equal(rd.byKey['og:url'].status, 'added');
+    const t = text(await read(ks.panel));
+    assert.match(t, /structured data\/warning: 1 JSON-LD block is only added by JavaScript \(VideoObject\)\. Google renders JavaScript in a later pass/);
+    assert.match(t, /social\/warning: 1 social tag is added or changed by JavaScript \(og:url\)/);
+
+    await ks.panel.click('button[data-tab="schema"]');
+    await ks.panel.click('[data-schema-view="source"]');
+    const prov = (hasText) => ks.panel.locator('article.card', { hasText }).locator('.prov').first().textContent();
+    assert.equal(await prov('"VideoObject"'), 'added by JavaScript');
+    for (const type of ['"Organization"', '"BreadcrumbList"', '"BlogPosting"']) assert.equal(await prov(type), 'in HTML', type);
+    assert.equal(await ks.panel.locator('article.card', { hasText: 'Microdata item 1' }).locator('.prov').count(), 0, 'no provenance for Microdata');
+    await ks.panel.click('[data-schema-view="google"]');
+    assert.equal(await ks.panel.locator('article.card', { hasText: 'Block 6' }).locator('.prov').first().textContent(), 'added by JavaScript');
+    assert.equal(await ks.panel.locator('article.card', { hasText: 'Block 3' }).locator('.prov').first().textContent(), 'in HTML');
+
+    await ks.panel.click('button[data-tab="overview"]');
+    const ov = (label) => ks.panel.locator('.kv-row', { has: ks.panel.locator('.kv-k', { hasText: new RegExp(`^.?${label}$`) }) }).first();
+    assert.equal(await ov('Canonical').locator('.prov').textContent(), 'in HTML');
+    assert.equal(await ov('Title').locator('.prov').textContent(), 'in HTML');
+    assert.match(await ov('Structured data').locator('.prov').textContent(), /1 added by JavaScript/);
+    assert.match(await ov('Server HTML').textContent(), /2 items added, changed or removed by JavaScript/);
+    await ks.panel.click('button[data-tab="social"]');
+    assert.equal(await ov('og:url').locator('.prov').textContent(), 'added by JavaScript');
+  });
+
   await check('toolbar badge shows the error count', async () => {
     const b = await badge(ks.tabId);
     assert.match(b.text, /^\d+$/);
@@ -211,6 +242,13 @@ try {
     assert.equal(r.seo.counts.errors + r.schema.counts.errors, 0, text(r) + JSON.stringify(r.schema.features));
     assert.equal(r.seo.counts.warnings + r.schema.counts.warnings, 0, text(r) + JSON.stringify(r.schema.features, null, 1));
     assert.ok(r.schema.features.some((f) => f.id === 'article' && f.status === 'valid'));
+  });
+  await check('clean page: server HTML matches the rendered page', async () => {
+    await clean.panel.waitForFunction(() => globalThis.__seoLensState.rendering);
+    const rd = await clean.panel.evaluate(() => globalThis.__seoLensState.rendering);
+    assert.ok(rd.items.length > 5 && rd.items.every((i) => i.status === 'html'), JSON.stringify(rd.items));
+    assert.deepEqual(rd.blocks.map((b) => b.status), ['html']);
+    assert.match(await clean.panel.locator('.kv-row', { hasText: 'Server HTML' }).textContent(), /Matches the rendered page/);
   });
   await check('clean page: badge is a check mark', async () => {
     assert.equal((await badge(clean.tabId)).text, '✓');

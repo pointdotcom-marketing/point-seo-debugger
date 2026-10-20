@@ -4,8 +4,8 @@ A Chrome extension for checking a page's SEO setup while you edit it. Click the 
 
 | Tab | What it shows |
 | --- | --- |
-| **Overview** | Indexable or not, a Google search-result preview, title and description length (characters and pixel width against Google's truncation point), canonical, meta robots, `X-Robots-Tag` header, HTTP status, robots.txt verdict for Googlebot, language, viewport, hreflang, and a ranked list of every on-page issue |
-| **Schema** | Every JSON-LD block and Microdata/RDFa item, checked against the schema.org vocabulary and against Google's rich result requirements. Each block shows whether it's *Eligible*, *Not eligible*, *Limited*, or *No longer shown*, with the reason. |
+| **Overview** | Indexable or not, a Google search-result preview, title and description length (characters and pixel width against Google's truncation point), canonical, meta robots, `X-Robots-Tag` header, HTTP status, robots.txt verdict for Googlebot, language, viewport, hreflang, **server HTML vs rendered** (each title, description, canonical, meta robots, hreflang, `og:`/`twitter:` tag and JSON-LD block is tagged *in HTML*, *added by JavaScript*, *changed by JavaScript* or *removed by JavaScript*, with a warning when something important only exists after JavaScript and an error when `noindex` differs), and a ranked list of every on-page issue |
+| **Schema** | Every JSON-LD block and Microdata/RDFa item, checked against the schema.org vocabulary and against Google's rich result requirements. Each block shows whether it's *Eligible*, *Not eligible*, *Limited*, or *No longer shown*, with the reason, and whether the JSON-LD was in the server HTML or injected by JavaScript (e.g. by Google Tag Manager). |
 | **Headings** | Counts for H1–H6 and the outline in page order, with skipped levels and empty headings flagged. Click a heading to scroll to it on the page. |
 | **Images** | Every image, with filters for missing alt, empty alt, filename-as-alt, and missing width/height. Click an image to find it on the page. Export as CSV. |
 | **Links** | Total, unique, internal, external, and nofollow counts. Flags empty anchor text, links to staging hosts (`*.webflow.io`, `*.vercel.app`, `localhost`…), and `http://` links. **Check link status** fetches each link and reports 404s and redirects. Export as CSV. |
@@ -53,6 +53,7 @@ To share a build, run `npm run package` and send `dist/point-seo-debugger-<versi
 
 - RDFa support is RDFa Lite (`vocab`, `typeof`, `property`, `resource`, `prefix`) plus `about`, `content`, and `href`/`src` values. Full RDFa chaining with `rel`, `rev`, and `datatype` isn't handled.
 - Microdata or RDFa text edited in place (without adding or removing elements) isn't picked up live. Click the re-scan button.
+- Server HTML vs rendered compares JSON-LD blocks, not Microdata/RDFa. The server HTML is fetched again with your cookies, so a page that varies per request (A/B tests, personalization) can show differences that crawlers wouldn't.
 - Google also requires markup to match visible page content. That can't be checked automatically.
 - The badge comes from on-page checks only. The panel's HTTP status, `X-Robots-Tag`, and robots.txt results come from network fetches, so the panel can show a couple more errors than the badge.
 - Online tools (Rich Results Test, PageSpeed) can't reach `localhost` or password-protected staging sites. For those, use **Schema → Source → Copy all as `<script>` tags** and paste the result into the Rich Results Test's **Code** tab. Microdata and RDFa items are included as their JSON-LD conversion.
@@ -67,7 +68,7 @@ npm install
 npm test
 ```
 
-Runs the unit tests for the validator, SEO checks, robots.txt matching, sitemap parsing, and the sitemap scan report.
+Runs the unit tests for the validator, SEO checks, robots.txt matching, sitemap parsing, the sitemap scan report, and the server HTML vs rendered comparison.
 
 ```bash
 npm run test:e2e
@@ -87,6 +88,7 @@ src/
   lib/robots.js          robots.txt parsing and matching
   lib/sitemap.js         sitemap parsing, nested sitemap crawling, URL filters
   lib/site-report.js     per-page scan rows and site-wide findings
+  lib/raw-html.js        server HTML vs rendered DOM comparison
   lib/vocab-data.js      compiled schema.org vocabulary (generated)
   sidepanel/             the UI
   scan/                  the sitemap scan page
