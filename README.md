@@ -13,6 +13,15 @@ A Chrome extension for checking a page's SEO setup while you edit it. Click the 
 | **AI** | Which AI crawlers may use the page, grouped by operator (OpenAI, Anthropic, Google, Perplexity, Apple, Meta, Amazon, Microsoft, Mistral and others) and split into **training**, **AI search**, and **user-triggered fetches**. Shows the robots.txt rule that decides each one, and flags user-triggered agents that may ignore robots.txt. Also reads Cloudflare `Content-Signal` and IETF `Content-Usage` preferences, the robots meta directives that affect AI Overviews and Copilot (`nosnippet`, `max-snippet`, `noarchive`, `nocache`), and `llms.txt`. **Test with bot user agents** re-fetches the page as each bot to catch CDN or firewall blocks that robots.txt doesn't show. A generator writes robots.txt rules for common policies. |
 | **Tools** | One-click links to the Rich Results Test, PageSpeed Insights, Schema.org Validator, W3C validators, Facebook and LinkedIn debuggers, robots.txt, sitemaps, and Wayback Machine |
 
+## Sitemap scan
+
+**Tools → Scan sitemap** opens a full-page scan of the site's sitemap (prefilled from robots.txt, else `/sitemap.xml`). It reads `<urlset>` and `<sitemapindex>` files, follows nested indexes, and handles `.xml.gz` and plain-text sitemaps.
+
+- **Filter and cap.** *Only URLs matching* takes space-separated terms: plain text matches anywhere in the URL (`/blog/`), `*` makes a glob matched against the URL or its path (`/blog/*`), and `!` excludes (`!*/tag/*`). *Max pages* defaults to 100 (up to 1,000).
+- **Rendered, like the side panel.** Each URL loads in a background tab (3 at a time by default, up to 8), waits for load plus *Wait after load* (default 1 s) for scripts and tag managers, and is collected and checked with the same code as the panel. The scan also fetches each URL for its HTTP status, redirects, and `X-Robots-Tag`, and checks it against robots.txt. Tabs use your browser session, so password-protected staging sites you're signed in to work. **Pause** and **Stop** finish the pages in flight; tabs close when the scan ends.
+- **Site-wide findings.** Non-200 responses; sitemap URLs that are noindex, blocked by robots.txt, or redirect; pages whose canonical points elsewhere; duplicate titles and descriptions (redirecting URLs aren't counted twice); missing titles and descriptions.
+- **Pages table.** URL, status, indexable (with the reason when not), title and its length/pixel width, description length, canonical (self/other/missing), H1 count, images missing alt, schema types, rich result counts (valid/warnings/invalid/deprecated), and error/warning counts. Click a column to sort, use the chips to show only pages with errors, not indexable, missing a description, and so on, and click a row for its full issue list. **Export CSV** downloads the rows shown.
+
 The toolbar badge shows the error count for the current tab (red), or the warning count (amber), or ✓ when clean. Hover the icon for a summary.
 
 ## Install (unpacked)
@@ -58,7 +67,7 @@ npm install
 npm test
 ```
 
-Runs the unit tests for the validator, SEO checks, and robots.txt matching.
+Runs the unit tests for the validator, SEO checks, robots.txt matching, sitemap parsing, and the sitemap scan report.
 
 ```bash
 npm run test:e2e
@@ -76,8 +85,11 @@ src/
   lib/google-rules.js    Google rich result requirements, one entry per feature
   lib/seo.js             on-page SEO checks
   lib/robots.js          robots.txt parsing and matching
+  lib/sitemap.js         sitemap parsing, nested sitemap crawling, URL filters
+  lib/site-report.js     per-page scan rows and site-wide findings
   lib/vocab-data.js      compiled schema.org vocabulary (generated)
   sidepanel/             the UI
+  scan/                  the sitemap scan page
 scripts/                 vocab, icon, and zip builders
 tests/                   unit tests, e2e test, fixtures
 ```

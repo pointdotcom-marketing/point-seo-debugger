@@ -6,6 +6,7 @@ import { readFile, mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { chromiumPath } from '../scripts/chromium.mjs';
@@ -32,6 +33,12 @@ const server = createServer(async (req, res) => {
     if (/Bytespider/.test(req.headers['user-agent'] || '')) return send(403, 'Forbidden');
   }
   if (path === '/robots.txt') return send(200, `User-agent: *\nDisallow: /blocked/\n\nSitemap: http://${host}/sitemap.xml\n`, { 'content-type': 'text/plain' });
+  const sitemap = { '/sitemap.xml': 'sitemap.xml', '/sitemaps/pages.xml': 'sitemap-pages.xml', '/sitemaps/more.xml.gz': 'sitemap-more.xml' }[path];
+  if (sitemap) {
+    const xml = (await readFile(join(fixtures, sitemap), 'utf8')).replaceAll('HOST', host);
+    return path.endsWith('.gz') ? send(200, gzipSync(xml), { 'content-type': 'application/gzip' }) : send(200, xml, { 'content-type': 'application/xml' });
+  }
+  if (path === '/old-page') return send(301, '', { location: '/clean.html' });
   if (path === '/assets/icon.png') return send(200, await readFile(join(root, 'src/icons/icon-128.png')), { 'content-type': 'image/png' });
   const file = { '/kitchen-sink.html': 'kitchen-sink.html', '/clean.html': 'clean.html', '/noindex.html': 'noindex.html', '/blocked/page.html': 'clean.html', '/': 'clean.html', '/guides/': 'clean.html' }[path];
   if (!file) return send(404, 'Not found');
@@ -265,6 +272,113 @@ try {
     await panel.waitForSelector('.empty p');
     assert.match(await panel.textContent('.empty p'), /only runs on web pages/);
   });
+
+  // ---- Sitemap scan -------------------------------------------------------
+  const tabsBefore = await sw.evaluate(async () => (await chrome.tabs.query({})).length);
+  let scan;
+  await check('Tools tab links to a sitemap scan prefilled from robots.txt', async () => {
+    await clean.panel.click('button[data-tab="tools"]');
+    const href = await clean.panel.$eval('[data-scan-sitemap]', (a) => a.href);
+    assert.match(href, /^chrome-extension:\/\/[^/]+\/src\/scan\/scan\.html\?/);
+    scan = await context.newPage();
+    scan.on('pageerror', (e) => pageErrors.push(`scan: ${e.message}`));
+    await scan.goto(href);
+    await scan.waitForFunction(() => document.getElementById('sitemap').value);
+    assert.equal(await scan.inputValue('#sitemap'), `${origin}/sitemap.xml`);
+  });
+
+  await check('sitemap scan: reads nested + gzipped sitemaps and scans every URL in background tabs', async () => {
+    // kitchen-sink.html injects a JSON-LD block 1.5s after load.
+    await scan.fill('#settle', '2000');
+    await scan.click('#start');
+    await scan.waitForFunction(() => globalThis.__seoLensScan.phase === 'done', null, { timeout: 90000 });
+    const s = await scan.evaluate(() => {
+      const st = globalThis.__seoLensScan;
+      return { sitemaps: st.crawl.sitemaps.map((m) => ({ url: m.url, type: m.type, urls: m.urls, errors: m.errors })), rows: st.rows, report: st.report };
+    });
+    const path = (u) => new URL(u).pathname;
+    assert.deepEqual(s.sitemaps.map((m) => [path(m.url), m.type, m.urls]), [['/sitemap.xml', 'sitemapindex', 0], ['/sitemaps/pages.xml', 'urlset', 5], ['/sitemaps/more.xml.gz', 'urlset', 3]]);
+    assert.equal(s.rows.length, 8, 'clean.html is listed twice but scanned once');
+    assert.ok(s.rows.every((r) => !r.pending), 'every row was scanned');
+    const row = Object.fromEntries(s.rows.map((r) => [path(r.url), r]));
+    assert.equal(row['/clean.html'].status, 200);
+    assert.equal(row['/clean.html'].indexable, true);
+    assert.equal(row['/clean.html'].canonicalKind, 'self');
+    assert.deepEqual(row['/clean.html'].types, ['WebSite', 'Organization', 'Article']);
+    assert.ok(row['/clean.html'].rich.valid >= 1);
+    assert.equal(row['/guides/'].canonicalKind, 'other');
+    assert.equal(row['/missing-page'].status, 404);
+    assert.ok(row['/kitchen-sink.html'].errors > 0);
+    assert.equal(row['/kitchen-sink.html'].imagesMissingAlt, 1);
+    assert.ok(row['/kitchen-sink.html'].types.includes('VideoObject'), 'JSON-LD injected after load is collected (tab was rendered)');
+
+    const f = Object.fromEntries(s.report.findings.map((x) => [x.id, x]));
+    const urls = (id) => (f[id].items || []).map((i) => path(i.url));
+    assert.deepEqual(urls('noindex'), ['/noindex.html']);
+    assert.deepEqual(urls('robots-blocked'), ['/blocked/page.html']);
+    assert.deepEqual(urls('redirects'), ['/old-page']);
+    assert.deepEqual(urls('non-200'), ['/missing-page']);
+    const dup = f['duplicate-titles'].groups.find((g) => g.value.startsWith('How home equity'));
+    assert.ok(dup, JSON.stringify(f['duplicate-titles']));
+    assert.ok(['/', '/guides/'].every((p) => dup.urls.map(path).includes(p)), dup.urls.join(', '));
+    assert.ok(!dup.urls.map(path).includes('/old-page'), 'the redirecting URL is not a duplicate');
+    assert.ok(urls('canonical-elsewhere').includes('/guides/'));
+  });
+
+  await check('sitemap scan: closes its background tabs', async () => {
+    await scan.waitForTimeout(300);
+    assert.equal(await sw.evaluate(async () => (await chrome.tabs.query({})).length), tabsBefore + 1);
+  });
+
+  await check('sitemap scan: table filters, sorting, row details and site-wide findings', async () => {
+    assert.match(await scan.textContent('#findings'), /Sitemap URLs that are noindex\s*1/);
+    await scan.click('[data-row-filter="not-indexable"]');
+    const notIndexable = await scan.$$eval('#table tr.row', (trs) => trs.map((tr) => new URL(tr.dataset.url).pathname));
+    assert.deepEqual(notIndexable.sort(), ['/blocked/page.html', '/missing-page', '/noindex.html', '/old-page']);
+    await scan.click('[data-row-filter="all"]');
+    await scan.click('th[data-sort="errors"]');
+    const first = await scan.$eval('#table tr.row', (tr) => tr.dataset.url);
+    assert.match(first, /kitchen-sink/, 'sorted by errors, most first');
+    await scan.click('#table tr.row');
+    assert.match(await scan.textContent('#table tr.detail'), /hreflang/);
+    await scan.fill('#search', 'noindex');
+    assert.equal(await scan.locator('#table tr.row').count(), 1);
+    await scan.fill('#search', '');
+  });
+
+  await check('sitemap scan: CSV export', async () => {
+    const [download] = await Promise.all([scan.waitForEvent('download'), scan.click('#export')]);
+    const body = await readFile(await download.path(), 'utf8');
+    const lines = body.trim().split('\n');
+    assert.match(lines[0], /^\uFEFF?"url","final url","status","indexable"/);
+    assert.equal(lines.length, 9);
+    assert.ok(lines.some((l) => l.includes('/noindex.html') && l.includes('"no","noindex"')));
+  });
+  if (shots) {
+    await scan.setViewportSize({ width: 1280, height: 900 });
+    await scan.screenshot({ path: join(shots, 'sitemap-scan.png'), fullPage: true });
+  }
+
+  await check('sitemap scan: pause and stop', async () => {
+    await scan.fill('#concurrency', '1');
+    await scan.fill('#settle', '600');
+    await scan.click('#start');
+    await scan.waitForFunction(() => globalThis.__seoLensScan.rows.filter((r) => !r.pending).length >= 1, null, { timeout: 30000 });
+    await scan.click('#pause');
+    const done = () => scan.evaluate(() => globalThis.__seoLensScan.rows.filter((r) => !r.pending).length);
+    await scan.waitForFunction(() => !globalThis.__seoLensScan.rows.some((r) => r.running), null, { timeout: 30000 });
+    const atPause = await done();
+    await scan.waitForTimeout(1500);
+    assert.equal(await done(), atPause, 'no progress while paused');
+    assert.equal(await scan.textContent('#pause'), 'Resume');
+    await scan.click('#stop');
+    await scan.waitForFunction(() => globalThis.__seoLensScan.phase === 'done', null, { timeout: 30000 });
+    assert.equal(await scan.evaluate(() => globalThis.__seoLensScan.stopped), true);
+    assert.ok((await done()) < 8);
+    await scan.waitForTimeout(300);
+    assert.equal(await sw.evaluate(async () => (await chrome.tabs.query({})).length), tabsBefore + 1, 'stop closes the scan tabs');
+  });
+  await scan?.close();
 
   await check('no JavaScript errors in the side panel', () => assert.deepEqual(pageErrors, []));
 } finally {
